@@ -908,7 +908,7 @@ tbody tr:hover { background: var(--accent-glow); }
           </button>
 
           <div style="text-align:center">
-            <a href="index.html" style="color:var(--text-muted);font-size:13px;text-decoration:none;">← Voltar à tela inicial</a>
+
           </div>
         </div>
       </div>
@@ -1482,7 +1482,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await initFirebase(); seedDemoData();
   HOSPITALS.forEach(h => document.getElementById('inputHospital').innerHTML += `<option value="${h}">${h}</option>`);
   const s = SESSION.get();
-  if (s && s.role === 'preceptor') {
+  // Só restaura sessão de preceptor — bloqueia coord/aluno
+  if (s && s.role === 'preceptor' && s.data) {
     currentPreceptor = s.data;
     document.getElementById('panelPrecName').textContent = s.data.name.split(' ').slice(0,3).join(' ').toUpperCase();
     document.getElementById('panelPrecCRM').textContent = s.data.crm;
@@ -1490,6 +1491,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     generateNewToken();
     showView('painelView');
   } else {
+    SESSION.clear();
     showView('loginView');
   }
 });

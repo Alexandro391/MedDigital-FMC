@@ -895,9 +895,7 @@ tbody tr:hover { background: var(--accent-glow); }
             <div>Utilize o RA e nome exatamente como foram cadastrados pela coordenação.</div>
           </div>
 
-          <div style="text-align:center">
-            <a href="index.html" style="color:var(--text-muted);font-size:13px;text-decoration:none;">← Voltar à tela inicial</a>
-          </div>
+
         </div>
       </div>
     </div>
@@ -1180,8 +1178,10 @@ const DATA = {
   },
   async getStudentShifts(ra) {
     if (firebaseReady) {
-      const snap = await db.collection('shifts').where('ra', '==', ra).orderBy('shiftAt', 'desc').get();
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Sem orderBy para evitar necessidade de índice composto no Firestore
+      const snap = await db.collection('shifts').where('ra', '==', ra).get();
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      return docs.sort((a,b) => new Date(b.shiftAt) - new Date(a.shiftAt));
     }
     return (LOCAL.all('shifts')).filter(s => s.ra === ra).sort((a,b) => new Date(b.shiftAt) - new Date(a.shiftAt));
   },
@@ -1359,6 +1359,20 @@ window.addEventListener('DOMContentLoaded', async () => {
   await initFirebase();
   seedDemoData();
 });
+
+function doLogout() { SESSION.clear(); currentStudent = null; showView('loginView'); }
+
+// ===== INIT ALUNO - proteção de sessão =====
+window.addEventListener('load', function() {
+  var s = SESSION.get();
+  if (s && s.role === 'aluno' && s.data && s.data.ra) {
+    currentStudent = s.data;
+    showView('dashView');
+  } else {
+    if (s && s.role !== 'aluno') SESSION.clear();
+    showView('loginView');
+  }
+});
 </script>
 <script>
 let currentStudent = null;
@@ -1494,6 +1508,17 @@ async function doRegisterShift() {
   const btn = document.querySelector('#registerView .btn-primary');
   btn.textContent = 'Validando...'; btn.disabled = true;
 
+  // RESTRICAO: 1 plantao por dia
+  const todayStr = new Date().toDateString();
+  const existingShifts = await DATA.getStudentShifts(currentStudent.ra);
+  const jaRegistrouHoje = existingShifts.some(s => new Date(s.shiftAt).toDateString() === todayStr);
+  if (jaRegistrouHoje) {
+    showToast('Você já registrou um plantão hoje. Permitido apenas 1 por dia.', 'error');
+    btn.textContent = '✅ CONFIRMAR PRESENÇA'; btn.disabled = false;
+    return;
+  }
+
+  // VALIDAR TOKEN
   const validToken = await DATA.validateToken(token);
   if (!validToken) {
     showToast('Token inválido ou expirado. Solicite novo token ao preceptor.', 'error');
@@ -1520,32 +1545,36 @@ async function doRegisterShift() {
 // HISTORY LOAD
 async function loadHistory() {
   if (!currentStudent) return;
-  const shifts = await DATA.getStudentShifts(currentStudent.ra);
   const el = document.getElementById('historyList');
-  if (!shifts.length) {
-    el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-muted)">Nenhum plantão registrado ainda.<br>Registre seu primeiro plantão!</div>`;
-    return;
+  el.innerHTML = '<div style="text-align:center;padding:32px"><div class="loader" style="margin:0 auto"></div></div>';
+  try {
+    const shifts = await DATA.getStudentShifts(currentStudent.ra);
+    if (!shifts.length) {
+      el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">Nenhum plantão registrado ainda.<br>Registre seu primeiro plantão!</div>';
+      return;
+    }
+    const total = shifts.length;
+    const pct = Math.round((total / META_PLANTOES) * 100);
+    el.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:8px">' +
+        '<div style="font-size:13px;color:var(--text-secondary)">' + total + ' plantão(ões) registrado(s)</div>' +
+        '<span class="badge badge-success">' + pct + '% concluído</span>' +
+      '</div>' +
+      shifts.map(function(s, i) {
+        return '<div class="history-item">' +
+          '<div class="history-num">' + String(i+1).padStart(2,'0') + '</div>' +
+          '<div style="flex:1">' +
+            '<div style="font-weight:600;font-size:14px">' + s.hospital + ' · ' + s.specialty + '</div>' +
+            '<div style="font-size:12px;color:var(--text-muted);margin-top:3px">' +
+              formatDate(s.shiftAt) + '</div>' +
+            '<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">' +
+              'Preceptor: ' + (s.preceptor || '—') + '</div>' +
+          '</div>' +
+          '<span class="badge badge-success">✓ OK</span>' +
+        '</div>';
+      }).join('');
+  } catch(e) {
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--danger)">Erro ao carregar histórico. Tente novamente.</div>';
+    console.error('loadHistory error:', e);
   }
-  el.innerHTML = shifts.map((s, i) => `
-    <div class="history-item">
-      <div class="history-num">${String(i+1).padStart(2,'0')}</div>
-      <div>
-        <div style="font-weight:600;font-size:14px">${s.hospital} · ${s.specialty}</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${formatDate(s.shiftAt)} · ${s.preceptor}</div>
-      </div>
-      <span class="badge badge-success">✓ OK</span>
-    </div>`).join('');
 }
-
-function doLogout() { SESSION.clear(); currentStudent = null; showView('loginView'); }
-
-document.addEventListener('DOMContentLoaded', async () => {
-  await initFirebase(); seedDemoData();
-  const s = SESSION.get();
-  if (s && s.role === 'aluno') { currentStudent = s.data; showView('dashView'); }
-  else showView('loginView');
-});
-</script>
-<script>if("serviceWorker" in navigator){navigator.serviceWorker.register("/pwa/sw.js").then(()=>console.log("SW registered")).catch(()=>{});}</script>
-</body>
-</html>
